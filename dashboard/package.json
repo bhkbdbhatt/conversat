@@ -1,0 +1,24 @@
+{
+  "name": "conversat-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Web UI for conversat: run suites, watch them live, inspect transcripts.",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "prepare": "svelte-kit sync",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.6",
+    "@sveltejs/kit": "^2.8.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@types/node": "^26.6.4",
+    "svelte": "^5.2.0",
+    "svelte-check": "^4.1.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
+}

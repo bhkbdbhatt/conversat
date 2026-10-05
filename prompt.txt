@@ -1,0 +1,470 @@
+## Phased Prompts to Build Your Chatbot Testing Platform
+
+Feed these sequentially to your AI coding assistant (Cursor, Claude Code, Copilot, etc.). Each phase builds on the last.
+
+---
+
+### Phase 0 — Project Scaffolding
+
+```
+Create a Python project called "conversat" (conversational testing platform).
+
+Stack:
+- Python 3.11+
+- Pydantic v2 for all data models
+- Typer for CLI
+- pytest for the test runner
+- pyyaml for test case parsing
+- httpx for async HTTP
+- websockets for WS connectors
+- Playwright for E2E web connector
+- rich for terminal output
+- uvicorn + fastapi for the dashboard API (later phase)
+
+Structure:
+conversat/
+├── pyproject.toml
+├── src/conversat/
+│   ├── __init__.py
+│   ├── models/          # Pydantic data models
+│   ├── engine/          # Core test engine
+│   ├── connectors/      # Pluggable bot connectors
+│   ├── crawler/         # Conversation crawler
+│   ├── assertions/      # Assertion strategies
+│   ├── reporting/       # Output formatters
+│   ├── cli/             # Typer CLI commands
+│   └── dashboard/       # FastAPI + Next.js (Phase 7)
+├── tests/               # Self-tests for conversat itself
+├── examples/            # Sample test cases + sample bot
+└── README.md
+
+Use pyproject.toml with [project] metadata, all deps as dependencies.
+Add a Makefile with: install, test, lint, run, crawl, report.
+```
+
+---
+
+### Phase 1 — Core Data Models
+
+```
+In src/conversat/models/, create Pydantic v2 models:
+
+1. Message:
+   - role: Literal["user", "bot", "system"]
+   - text: str
+   - metadata: dict (optional)
+   - timestamp: datetime
+
+2. BotResponse:
+   - text: str
+   - quick_replies: list[str] (optional)
+   - cards: list[dict] (optional)
+   - raw: dict (raw platform response)
+   - latency_ms: float
+   - error: str (optional)
+
+3. TestStep:
+   - user: str
+   - expect: Expectation (optional)
+   - wait_ms: int = 500
+   - tag: str (optional)
+
+4. Expectation:
+   - contains: list[str] (optional)
+   - contains_any: list[str] (optional)
+   - not_contains: list[str] (optional)
+   - regex: list[str] (optional)
+   - intent: str (optional)
+   - entities: dict[str, str] (optional)
+   - quick_replies: list[str] (optional)
+   - llm_judge: LLMJudgeConfig (optional)
+   - semantic_similarity: float (optional)  # threshold 0-1
+
+5. LLMJudgeConfig:
+   - model: str = "gpt-4o"
+   - rubric: str  # e.g. "The bot should acknowledge the user's name"
+   - pass_threshold: float = 0.7
+
+6. TestScenario:
+   - name: str
+   - description: str (optional)
+   - steps: list[TestStep]
+   - tags: list[str] (optional)
+   - connector: str = "rest"  # which connector to use
+   - config: dict (connector-specific config, optional)
+
+7. TestResult:
+   - scenario_name: str
+   - passed: bool
+   - steps: list[StepResult]
+   - total_latency_ms: float
+   - error: str (optional)
+   - started_at: datetime
+   - finished_at: datetime
+
+8. StepResult:
+   - step_index: int
+   - user_message: str
+   - bot_response: BotResponse
+   - passed: bool
+   - failed_assertions: list[str] (optional)
+
+9. CrawlResult:
+   - path: list[Message]
+   - depth: int
+   - discovered_at: datetime
+   - unique_id: str (hash of path)
+
+Write a full test file tests/test_models.py that validates all models
+with valid and invalid inputs.
+```
+
+---
+
+### Phase 2 — Connector Abstraction + REST Connector
+
+```
+Create the connector layer.
+
+1. src/conversat/connectors/base.py:
+   class BotConnector(ABC):
+       - async def connect(self, config: dict) -> None
+       - async def disconnect(self) -> None
+       - async def send(self, message: str, session_id: str = None) -> BotResponse
+       - async def get_quick_replies(self, response: BotResponse) -> list[str]
+       - async def reset_session(self, session_id: str) -> None
+       - @property def name(self) -> str
+
+   Include a ConnectorRegistry that maps name strings to connector classes.
+   Register connectors via a decorator: @register_connector("rest")
+
+2. src/conversat/connectors/rest.py:
+   class RestConnector(BotConnector):
+       - config keys: base_url, endpoint, headers, timeout, auth
+       - POSTs JSON {"message": text, "session_id": sid}
+       - Parses response into BotResponse
+       - Handles quick_replies from response JSON
+
+3. src/conversat/connectors/websocket.py:
+   class WebSocketConnector(BotConnector):
+       - config keys: url, protocol (json/text), headers
+       - Maintains persistent connection
+       - Sends/receives messages over WS
+
+4. src/conversat/connectors/docker.py:
+   class DockerConnector(BotConnector):
+       - config keys: image, port, env, command
+       - Spins up a Docker container
+       - Proxies to REST or WS inside the container
+       - Tears down on disconnect
+
+Write integration tests in tests/test_connectors.py using a mock FastAPI
+server (httpx ASGITransport) that simulates a simple echo bot.
+```
+
+---
+
+### Phase 3 — Test Engine (Core Runner)
+
+```
+Create the test execution engine.
+
+1. src/conversat/engine/loader.py:
+   - load_scenario(path: str) -> TestScenario
+   - load_suite(directory: str) -> list[TestScenario]
+   - Supports .yaml and .yml files
+   - Supports a suite.yaml that lists scenarios with includes
+
+2. src/conversat/engine/runner.py:
+   class TestRunner:
+       - __init__(self, scenarios: list[TestScenario], connector_registry)
+       - async def run(self) -> list[TestResult]
+       - async def run_scenario(self, scenario: TestScenario) -> TestResult
+       - Internal: creates connector, connects, iterates steps,
+         sends user messages, collects bot responses, runs assertions
+       - Supports parallel execution (asyncio.gather with semaphore)
+       - Emits progress via rich (live table showing pass/fail)
+
+3. src/conversat/engine/uttermancer.py (utterance expander):
+   - If a step has `user: ["hello", "hi", "hey"]` (list), expand into
+     multiple scenario variants (cartesian product across steps)
+   - Cap total variants with a max_variants parameter (default 100)
+
+4. src/conversat/cli/run.py:
+   Typer command: conversat run [path]
+   - path: file or directory of test scenarios
+   - --connector: override connector
+   - --parallel N
+   - --timeout MS
+   - --output: junit-xml | allure | json
+   - --fail-fast: stop on first failure
+
+Example usage:
+   conversat run examples/tests/ --parallel 4 --output junit-xml
+
+Write a sample test in examples/tests/greeting.yaml and a mock bot
+in examples/mock_bot.py (FastAPI, returns canned responses).
+```
+
+---
+
+### Phase 4 — Assertion Engine
+
+```
+Create the assertion system.
+
+1. src/conversat/assertions/base.py:
+   class Assertion(ABC):
+       - async def check(self, response: BotResponse, context: dict) -> AssertionResult
+   AssertionResult: passed: bool, message: str, score: float (optional)
+
+2. src/conversat/assertions/deterministic.py:
+   - ContainsAssertion
+   - ContainsAnyAssertion
+   - NotContainsAssertion
+   - RegexAssertion
+   - QuickRepliesAssertion
+   - LatencyAssertion (max_ms)
+   - IntentAssertion (checks NLU intent from response metadata)
+   - EntityAssertion (checks extracted entities)
+
+3. src/conversat/assertions/llm_judge.py:
+   - LLMJudgeAssertion:
+     - Takes rubric string + bot response
+     - Calls LLM (OpenAI/Anthropic/local via LiteLLM)
+     - Prompt: "You are a QA evaluator. Given this conversation and rubric,
+       score the bot's response 0-1. Respond JSON: {score, reasoning}"
+     - Passes if score >= threshold
+     - Caches results (hash of message+response+model)
+
+4. src/conversat/assertions/semantic.py:
+   - SemanticSimilarityAssertion:
+     - Embeds expected text + actual response (using sentence-transformers
+       or OpenAI embeddings)
+     - Cosine similarity >= threshold
+
+5. src/conversat/assertions/engine.py:
+   - AssertionEngine: takes an Expectation object, instantiates the right
+     assertion(s), runs them all, aggregates results.
+
+Write unit tests for each assertion type with mocked responses.
+```
+
+---
+
+### Phase 5 — Conversation Crawler
+
+```
+Create the auto-crawler.
+
+1. src/conversat/crawler/crawler.py:
+   class ConversationCrawler:
+       - __init__(self, connector, max_depth=4, max_paths=50,
+                  max_branching=5, start_messages: list[str])
+       - async def crawl(self) -> list[CrawlResult]
+       - Algorithm:
+         a. Start with each start_message
+         b. Send message, get response + quick_replies
+         c. For each quick reply (up to max_branching), enqueue new path
+         d. BFS until max_depth or max_paths
+         e. Deduplicate by path hash
+         f. Return all discovered paths
+
+       - async def export_as_scenarios(self, results, output_dir) -> None
+         - Converts each CrawlResult into a TestScenario YAML
+         - User messages = what was sent
+         - Expectations = empty (user fills in) or auto-generate
+           "not_contains: [error, sorry, i don't understand]"
+
+2. src/conversat/cli/crawl.py:
+   Typer command: conversat crawl
+   - --connector
+   - --start "hello" "hi" (multiple start messages)
+   - --max-depth N
+   - --max-paths N
+   - --output dir/
+   - --dry-run (show tree without saving)
+
+3. Visual output: print the conversation tree using rich (tree panel),
+   color-coded by depth.
+
+Write a test using a mock bot that returns 3 quick replies at each step,
+verify the crawler discovers the expected number of paths.
+```
+
+---
+
+### Phase 6 — Reporting + CI/CD
+
+```
+Create reporting and CI integration.
+
+1. src/conversat/reporting/junit.py:
+   - to_junit_xml(results: list[TestResult]) -> str
+   - Standard JUnit XML format (works with Jenkins, GitLab, GitHub)
+
+2. src/conversat/reporting/allure.py:
+   - to_allure_results(results, output_dir) -> None
+   - Writes allure-results/ folder with .json files
+
+3. src/conversat/reporting/json_report.py:
+   - to_json(results) -> str (full detail, for dashboard)
+
+4. src/conversat/reporting/terminal.py:
+   - Print rich summary table:
+     Total | Passed | Failed | Skipped | Avg Latency
+   - Show failed steps with diff (expected vs actual)
+   - Exit code: 0 if all pass, 1 if any fail
+
+5. .github/workflows/conversat.yml:
+   - Trigger: on pull_request
+   - Steps: setup python, install, run conversat run tests/,
+     upload JUnit artifact, post results as PR comment
+     (using github-actions-python or a simple REST call)
+
+6. src/conversat/cli/report.py:
+   - conversat report results.json --format html
+   - Generates a self-contained HTML report (single file, embedded CSS/JS)
+     with: summary, per-scenario detail, conversation transcript view,
+     latency chart (simple SVG)
+
+Test: run the full pipeline against the mock bot, verify JUnit XML
+is valid, verify HTML report renders.
+```
+
+---
+
+### Phase 7 — Dashboard (Web UI)
+
+```
+Create the web dashboard.
+
+Backend (src/conversat/dashboard/api.py):
+- FastAPI app with:
+  - POST /api/runs  → trigger a test run
+  - GET /api/runs   → list runs
+  - GET /api/runs/{id} → run detail
+  - GET /api/runs/{id}/scenarios → scenario results
+  - GET /api/scenarios → list test scenarios
+  - POST /api/scenarios → create/edit scenario
+  - GET /api/crawl/{run_id} → crawl results as tree
+  - WebSocket /ws/runs/{id} → live progress updates
+
+Frontend (dashboard/):
+- Next.js 14 + Tailwind + shadcn/ui
+- Pages:
+  - / (Dashboard: recent runs, pass rate trend)
+  - /runs (List all runs)
+  - /runs/[id] (Run detail: scenario table, expandable conversations)
+  - /scenarios (Scenario list, create/edit form)
+  - /scenarios/[id] (Scenario detail + conversation transcript viewer)
+  - /crawl (Crawl results as interactive tree)
+  - /settings (Connector configs, LLM API keys)
+
+- Conversation viewer: chat-bubble UI showing user/bot messages,
+  highlight failed assertions inline, show latency per step.
+
+- Live run view: WebSocket-driven, shows steps completing in real-time.
+
+Keep it simple. No auth for MVP (single-user local tool).
+```
+
+---
+
+### Phase 8 — LLM-Enhanced Features (Differentiator)
+
+```
+Add LLM-powered features that go beyond Botium.
+
+1. src/conversat/engine/auto_assert.py:
+   - AutoAssertionGenerator:
+     - Given a conversation transcript, use LLM to generate
+       appropriate Expectations for each step
+     - "Looking at this conversation, what should we assert at step 3?"
+     - Output: Expectation object (contains, not_contains, intent, etc.)
+     - CLI: conversat run --auto-assert (generates suggestions, user reviews)
+
+2. src/conversat/engine/redteam.py:
+   - RedTeamGenerator:
+     - Given a bot description/prompt, generate adversarial test messages
+     - Categories: jailbreak, PII extraction, topic drift,
+       multi-turn confusion, injection
+     - CLI: conversat redteam --bot "customer support" --count 20
+     - Outputs as test scenarios
+
+3. src/conversat/engine/regression.py:
+   - RegressionDetector:
+     - Compares current run vs previous run (by scenario name)
+     - Flags: response changed significantly (embedding distance),
+       latency regression (>20% slower), new errors
+     - CLI: conversat compare run-123 run-124
+
+4. src/conversat/engine/eval_suite.py:
+   - Built-in eval suites:
+     - conversat eval --suite "hallucination" --connector rest
+     - conversat eval --suite "pii" --connector rest
+     - conversat eval --suite "tone" --connector rest
+   - Each suite is a pre-built set of scenarios + LLM judge rubrics
+```
+
+---
+
+### Phase 9 — Packaging + Distribution
+
+```
+Finalize for distribution.
+
+1. pyproject.toml:
+   - Add [project.scripts]: conversat = "conversat.cli.main:app"
+   - Add optional extras:
+     [project.optional-dependencies]
+     llm = ["litellm", "sentence-transformers"]
+     dashboard = ["fastapi", "uvicorn"]
+     playwright = ["playwright"]
+     docker = ["docker"]
+
+2. Dockerfile:
+   - Multi-stage: build frontend, copy into Python image
+   - Entrypoint: conversat
+
+3. Docker-compose.yml:
+   - Service: conversat (API + dashboard)
+   - Service: mock-bot (for demo)
+   - Volumes: for test results
+
+4. README.md:
+   - Quick start (3 commands)
+   - Feature list
+   - Architecture diagram (ASCII)
+   - Connector list
+   - CI/CD setup
+   - Comparison table vs Botium (features, not code)
+
+5. License: MIT (or your choice)
+
+6. GitHub repo setup:
+   - .gitignore
+   - CONTRIBUTING.md
+   - CHANGELOG.md
+   - .pre-commit-config.yaml (ruff, mypy)
+```
+
+---
+
+## Usage Pattern
+
+| Phase | Prompt to feed | Expected output |
+|---|---|---|
+| 0 | "Scaffold the project" | Working `pip install -e .`, `conversat --help` |
+| 1 | "Build the models" | `pytest tests/test_models.py` passes |
+| 2 | "Build connectors" | `pytest tests/test_connectors.py` passes |
+| 3 | "Build the engine" | `conversat run examples/tests/` works against mock bot |
+| 4 | "Build assertions" | LLM judge + semantic assertions tested |
+| 5 | "Build the crawler" | `conversat crawl` discovers paths, exports YAML |
+| 6 | "Build reporting" | JUnit XML + HTML report generated |
+| 7 | "Build the dashboard" | `conversat dashboard` → localhost:3000 |
+| 8 | "Build LLM features" | `conversat redteam`, `conversat compare` work |
+| 9 | "Package it" | `pip install conversat` from PyPI (or git) |
+
+Each phase is self-contained — you can stop at any point and have a working tool. Phases 0–4 give you a **credible MVP** in ~2 weeks of focused work.
+

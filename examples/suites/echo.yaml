@@ -1,0 +1,74 @@
+# Offline example: the in-process echo bot. No server, no network.
+#
+#   conversat run examples/suites/echo.yaml
+name: echo-offline
+description: Demonstrates templating, tags and assertion combinators
+
+connector:
+  type: echo
+  config:
+    prefix: "echo: "
+    uppercase: false
+
+defaults:
+  timeout: 5
+  tags: [offline]
+
+cases:
+  - name: plain-echo
+    description: The echo bot returns exactly what it was told
+    steps:
+      - send: hello
+        expect:
+          - equals: "echo: hello"
+          - starts_with: "echo:"
+          - not_contains: error
+
+  - name: templating
+    description: Variables are rendered into the message
+    variables:
+      name: Ada
+      greeting: Hello
+    steps:
+      - send: "{{vars.greeting}}, {{vars.name}}!"
+        expect:
+          - contains: Hello, Ada
+          - iequals: "echo: Hello, Ada!"
+          - similar_to:
+              value: "echo: Hello, Ada!"
+              threshold: 0.9
+
+  - name: length-bounds
+    description: Length assertions and combinators
+    steps:
+      - send: a fairly long message to measure
+        expect:
+          - min_length: 5
+          - max_length: 200
+          - all_of:
+              - contains: long
+              - not_contains: missing
+          - not:
+              contains: ERROR
+
+  - name: json-path-demo
+    description: The echo bot exposes the message under a JSON path
+    steps:
+      - send: ping
+        expect:
+          - not_empty: true
+
+  - name: error-on-demand
+    description: Turn-level error handling (the connector is told to fail)
+    connector:
+      type: echo
+      config:
+        prefix: "echo: "
+        error_on: ["explode"]
+    steps:
+      - send: please explode
+        expect:
+          - no_error: false
+      - send: carry on
+        expect:
+          - contains: carry on

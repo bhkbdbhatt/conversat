@@ -1,0 +1,119 @@
+# Conversational smoke tests against the bundled sample bot.
+#
+#   python examples/bot/app.py --port 8099
+#   conversat run examples/suites/http.yaml
+#   conversat run examples/suites/http.yaml --tags memory
+name: sample-bot-http
+description: Greeting, arithmetic, policy and memory checks over HTTP
+
+connector:
+  type: http
+  config:
+    url: http://127.0.0.1:8099/chat
+    method: POST
+    headers:
+      accept: application/json
+    json_body:
+      message: "{{text}}"
+      user: "{{vars.user}}"
+    response_text_path: reply
+    session_id_path: user
+    timeout: 10
+
+defaults:
+  timeout: 15
+  tags: [smoke]
+  variables:
+    user: conversat-tester
+
+cases:
+  - name: greeting
+    description: The bot greets the user in a friendly way
+    tags: [chat, fast]
+    steps:
+      - send: Hello!
+        name: greeting
+        expect:
+          - not_empty: true
+          - contains_any: [hello, hi, hey]
+          - latency_under: 5000
+
+  - name: arithmetic
+    description: Simple sums are computed correctly
+    tags: [logic]
+    steps:
+      - send: What is 3 + 4?
+        expect:
+          - contains: "7"
+      - send: And 10 - 4?
+        expect:
+          - type: matches
+            pattern: "\b6\b"
+      - send: Multiply 6 by 7
+        expect:
+          - contains_any: ["42", "cannot"]
+          - latency_under: 5000
+
+  - name: memory
+    description: The bot remembers the name given in an earlier turn
+    tags: [memory]
+    setup:
+      - send: My name is Ada
+        expect:
+          - type: contains
+            value: Ada
+    steps:
+      - send: What is my name?
+        expect:
+          - type: matches
+            pattern: "(?i)\\bada\\b"
+          - not_contains: "I did not"
+
+  - name: refund-policy
+    description: Refund questions get a policy answer with an offer to help
+    tags: [policy]
+    steps:
+      - send: What is your refund policy?
+        expect:
+          - contains_any: [refund, 30 days]
+          - type: contains_any
+            values: [refund, return]
+          - not_contains: "I am a bot"
+          - any_of:
+              - contains: "?"
+              - contains: "would you like"
+
+  - name: privacy
+    description: Privacy questions get an explicit data-handling answer
+    tags: [policy]
+    steps:
+      - send: Do you store my personal data?
+        expect:
+          - contains: data
+          - not_contains: "I don't know"
+
+  - name: handoff-to-human
+    description: Escalation mentions availability
+    tags: [escalation]
+    steps:
+      - send: Can I talk to a human agent?
+        expect:
+          - contains_any: [agent, human, representative]
+          - not_empty: true
+
+  - name: empty-message
+    description: A blank message is handled gracefully instead of crashing
+    tags: [robustness]
+    steps:
+      - send: "   "
+        expect:
+          - not_empty: true
+          - not_contains: "Traceback"
+
+  - name: unknown-topic
+    description: Out-of-scope questions ask for clarification
+    tags: [robustness]
+    steps:
+      - send: Blorp zanzibar quux
+        expect:
+          - contains_any: [rephrase, help, not quite]

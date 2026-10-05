@@ -1,0 +1,51 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+
+# virtualenvs
+.venv/
+venv/
+env/
+
+# tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# conversat output
+reports/
+out/
+*.conversat.json
+test-results/
+playwright-report/
+
+# playwright
+.playwright/
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+#dashboard
+dashboard/.next/
+dashboard/.vercel/
+dashboard/.env.local
+dashboard/.env.development.local
+dashboard/.env.test.local
+dashboard/.env.production.local
+dashboard/.env.local.test
+dashboard/node_modules/*
+dashboard/.cache/
+dashboard/.svelte-kit/

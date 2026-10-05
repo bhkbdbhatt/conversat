@@ -1,0 +1,78 @@
+# Offline example: a scripted bot with a fixed reply sequence. Ideal for CI
+# smoke tests where you do not want to depend on a real service.
+#
+#   conversat run examples/suites/scripted.yaml
+#
+# Every case gets a fresh connector, so each conversation starts again at the
+# first reply in the script.
+name: scripted-offline
+description: Verifies the runner end to end without any network access
+
+connector:
+  type: scripted
+  config:
+    replies:
+      - "Hi! How can I help?"
+      - "Your order #A-123 ships tomorrow."
+      - "You can return it within 30 days."
+    repeat_last: true
+
+defaults:
+  timeout: 5
+  tags: [offline, ci]
+
+cases:
+  - name: greeting-then-order
+    description: The script is consumed in order within one conversation
+    steps:
+      - send: hello
+        expect:
+          - contains: How can I help
+          - similar_to: { value: "Hi! How can I help?", threshold: 0.95 }
+          - not_contains: order
+      - send: where is my order
+        expect:
+          - type: matches
+            pattern: "#A-\\d+"
+          - contains: tomorrow
+          - latency_under: 5000
+
+  - name: repeated-script-tail
+    description: Once the script runs out, the last reply repeats
+    steps:
+      - send: one
+        expect: [{ contains: How can I help }]
+      - send: two
+        expect: [{ contains: order }]
+      - send: three
+        expect: [{ contains: return }]
+      - send: four
+        expect: [{ contains: return }]
+
+  - name: retries-recover-flakiness
+    description: A retry policy recovers once the script reaches the right reply
+    retry:
+      attempts: 4
+      delay: 0.01
+      backoff: none
+      retry_on: [failed_assertion]
+    steps:
+      - send: this only matches on a later attempt
+        expect:
+          - contains: order
+
+  - name: latency-budget
+    description: Latency assertions pass against an instant scripted bot
+    steps:
+      - send: are you fast?
+        expect:
+          - not_empty: true
+          - latency_under: 2000
+
+  - name: tags-and-filters
+    description: Shows how tags drive --tags / --exclude-tags selection
+    tags: [filters, demo]
+    steps:
+      - send: tagged case
+        expect:
+          - iequals: "Hi! How can I help?"

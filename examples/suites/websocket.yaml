@@ -1,0 +1,52 @@
+# WebSocket example: talks to the sample bot's /ws/chat endpoint.
+#
+#   python examples/bot/app.py --port 8099
+#   conversat run examples/suites/websocket.yaml
+name: sample-bot-websocket
+description: The same conversations as http.yaml, over a WebSocket
+
+connector:
+  type: websocket
+  config:
+    url: ws://127.0.0.1:8099/ws/chat
+    request_template: '{"message": "{{text}}"}'
+    response_text_path: reply
+    response_timeout: 10
+    handshake_paths:
+      - start
+
+defaults:
+  timeout: 15
+  tags: [smoke, websocket]
+  retry:
+    attempts: 2
+    delay: 0.5
+    retry_on: [error, timeout]
+
+cases:
+  - name: greeting
+    tags: [chat]
+    steps:
+      - send: Hello over websocket!
+        expect:
+          - contains_any: [hello, hi]
+          - latency_under: 5000
+
+  - name: memory
+    tags: [memory]
+    setup:
+      - send: My name is Grace
+        expect:
+          - contains: Grace
+    steps:
+      - send: What is my name?
+        expect:
+          - type: matches
+            pattern: "(?i)\\bgrace\\b"
+
+  - name: farewell
+    tags: [chat]
+    steps:
+      - send: thanks, bye
+        expect:
+          - contains_any: [bye, goodbye]

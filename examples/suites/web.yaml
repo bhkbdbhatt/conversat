@@ -1,0 +1,51 @@
+# Browser (Playwright) example: drives the sample bot's chat UI at /
+#
+#   python examples/bot/app.py --port 8099
+#   playwright install chromium          # once
+#   conversat run examples/suites/web.yaml
+name: sample-bot-web
+description: End-to-end conversations against the real DOM
+
+connector:
+  type: web
+  config:
+    base_url: http://127.0.0.1:8099/
+    input_selector: "#chat-input"
+    send_selector: "#send"
+    message_selector: "[data-conversat-msg='bot']"
+    timeout: 20
+    headless: true
+    screenshot_dir: reports/screenshots
+
+defaults:
+  timeout: 30
+  tags: [e2e, browser]
+
+cases:
+  - name: greeting
+    tags: [smoke, e2e]
+    steps:
+      - send: Hello from the browser
+        expect:
+          - contains_any: [hello, hi]
+          - not_empty: true
+
+  - name: multi-turn-memory
+    tags: [e2e, memory]
+    setup:
+      - send: My name is Alan
+        expect:
+          - contains: Alan
+    steps:
+      - send: What is my name?
+        expect:
+          - type: matches
+            pattern: "(?i)\\balan\\b"
+
+  - name: policy-question
+    tags: [e2e]
+    steps:
+      - send: What is your refund policy?
+        expect:
+          - contains_any: [refund, 30 days]
+          - not_contains: "Traceback"
